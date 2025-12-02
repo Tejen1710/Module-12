@@ -1,37 +1,23 @@
+"""
+Basic user API tests for backward compatibility with Module 11.
+For comprehensive endpoint tests, see tests/integration/test_users_calculations_api.py
+"""
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.main import app
-from app.database import Base, get_db
-
-# Use an in-memory SQLite for tests (simple)
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_api.db"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# Create tables for the test DB
-Base.metadata.drop_all(bind=engine)
-Base.metadata.create_all(bind=engine)
+from app.database import get_db
 
 
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-app.dependency_overrides[get_db] = override_get_db
-
-client = TestClient(app)
+@pytest.fixture
+def client(override_get_db):
+    """Create a test client with database override"""
+    app.dependency_overrides[get_db] = lambda: override_get_db
+    return TestClient(app)
 
 
-def test_create_user_success():
+def test_create_user_success(client):
+    """Test successful user creation via POST /users/"""
     response = client.post(
         "/users/",
         json={
@@ -48,7 +34,8 @@ def test_create_user_success():
     assert "created_at" in data
 
 
-def test_create_user_duplicate_email():
+def test_create_user_duplicate_email(client):
+    """Test that duplicate emails are rejected"""
     # First user
     client.post(
         "/users/",
@@ -67,4 +54,5 @@ def test_create_user_duplicate_email():
             "password": "password456",
         },
     )
-    assert response.status_code in (400, 409)  # depending on how you handle error
+    assert response.status_code == 400
+    assert "already exists" in response.json()["detail"]
